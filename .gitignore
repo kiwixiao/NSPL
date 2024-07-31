@@ -1,0 +1,9 @@
+# ignore all
+*
+# not
+!*.py
+!*.sh
+!*.md
+!*.txt
+!*.m
+!.gitignore
