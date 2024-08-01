@@ -162,42 +162,11 @@ def train_yolo_model(output_dir, epochs=400):
         # The model is automatically saved after training
         print(f"Model saved at: {results.save_dir}")
         
-        # Print some training metrics
-        print(f"Best mAP50: {results.best_map50}")
         
     except Exception as e:
         print(f"An error occurred during training: {str(e)}")
     
     return model
-
-def inference_on_mri(model, mri_path):
-    print(f"Performing inference on {mri_path}")
-    mri = nib.load(mri_path).get_fdata()
-    
-    results = []
-    for i in range(mri.shape[2]):
-        slice_img = mri[:,:,i]
-        slice_img = ((slice_img - slice_img.min()) / (slice_img.max() - slice_img.min()) * 255).astype(np.uint8)
-        result = model(slice_img)
-        results.append(result)
-    
-    print("Inference completed")
-    return results
-
-def visualize_results(mri, results):
-    print("Visualizing results")
-    for i, result in enumerate(results):
-        plt.figure(figsize=(10, 10))
-        plt.imshow(mri[:,:,i], cmap='gray')
-        
-        for box in result.boxes:
-            x1, y1, x2, y2 = box.xyxy[0]
-            plt.gca().add_patch(plt.Rectangle((x1, y1), x2-x1, y2-y1, fill=False, edgecolor='r', linewidth=2))
-        
-        plt.title(f"Slice {i}")
-        plt.axis('off')
-        plt.show()
-    print("Visualization completed")
 
 if __name__ == "__main__":
     image_dir = "./images"
