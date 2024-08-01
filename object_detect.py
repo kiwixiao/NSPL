@@ -136,7 +136,7 @@ def create_data_yaml(output_dir):
         yaml.dump(data, f)
     print("data.yaml created")
 
-def train_yolo_model(output_dir, epochs=1):
+def train_yolo_model(output_dir, epochs=400):
     print(f"Training YOLOv8 model with data from {output_dir}")
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -155,10 +155,6 @@ def train_yolo_model(output_dir, epochs=1):
         
         # The model is automatically saved after training
         print(f"Model saved at: {results.save_dir}")
-        
-        # You can also manually save the model if needed
-        model.save('saved_model/best.pt')
-        print("Model manually saved at: saved_model/best.pt")
         
         # Print some training metrics
         print(f"Best mAP50: {results.best_map50}")
