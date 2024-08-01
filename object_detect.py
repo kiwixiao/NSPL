@@ -46,7 +46,11 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
     print(f"MRI shape: {mri.shape}")
     print(f"Mask shape: {mask.shape}")
     
-    for i in range(mri.shape[2]):
+    # Determine the number of slices to process
+    num_slices = min(mri.shape[2], mask.shape[2])
+    print(f"Processing {num_slices} slices")
+    
+    for i in range(num_slices):
         slice_img = mri[:,:,i]
         slice_mask = mask[:,:,i]
         
@@ -60,6 +64,8 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
             save_yolo_annotation(objects, txt_filename)
         else:
             print(f"No objects found in slice {i} of {subject_id}")
+    
+    print(f"Processed {num_slices} slices for {subject_id}")
 
 def process_all_mri_data(image_dir, mask_dir, output_dir):
     print(f"Processing all MRI data:")
