@@ -149,7 +149,7 @@ def train_yolo_model(output_dir, epochs=400):
     print(f"Using device: {device}")
     
     # Load a model
-    model = YOLO('yolov8n.yaml')  # build a new model from YAML
+    model = YOLO('yolov8m.yaml')  # build a new model from YAML
     
     data_yaml_path = os.path.join(os.getcwd(), output_dir, 'data.yaml')
     
