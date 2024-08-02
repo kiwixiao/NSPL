@@ -11,17 +11,38 @@ import glob
 import torch
 from scipy.ndimage import zoom
 
-def find_objects(mask):
+def find_objects(mask, margin=1.2):
     _, binary_mask = cv2.threshold(mask.astype(np.uint8), 0, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     objects = []
     for contour in contours:
         x, y, w, h = cv2.boundingRect(contour)
-        center_x = (x + w / 2) / mask.shape[1]
-        center_y = (y + h / 2) / mask.shape[0]
-        width = w / mask.shape[1]
-        height = h / mask.shape[0]
+        
+        # Calculate center
+        center_x = x + w / 2
+        center_y = y + h / 2
+        
+        # Apply margin
+        w_with_margin = w * margin
+        h_with_margin = h * margin
+        
+        # Ensure the box doesn't exceed image boundaries
+        x_min = max(0, center_x - w_with_margin / 2)
+        y_min = max(0, center_y - h_with_margin / 2)
+        x_max = min(mask.shape[1], center_x + w_with_margin / 2)
+        y_max = min(mask.shape[0], center_y + h_with_margin / 2)
+        
+        # Recalculate width and height
+        w_final = x_max - x_min
+        h_final = y_max - y_min
+        
+        # Convert to YOLO format
+        center_x = (x_min + w_final / 2) / mask.shape[1]
+        center_y = (y_min + h_final / 2) / mask.shape[0]
+        width = w_final / mask.shape[1]
+        height = h_final / mask.shape[0]
+        
         objects.append([0, center_x, center_y, width, height])  # 0 is the class index for airway
     
     return objects
