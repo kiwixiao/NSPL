@@ -258,7 +258,7 @@ def create_data_yaml(output_dir):
         yaml.dump(data, f)
     print("data.yaml created")
 
-def train_yolo_model(output_dir, epochs=1):
+def train_yolo_model(output_dir, epochs=500):
     print(f"Training YOLOv8 model with data from {output_dir}")
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
