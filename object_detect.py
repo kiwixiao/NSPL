@@ -12,11 +12,15 @@ import torch
 from scipy.ndimage import zoom
 
 def find_objects(mask, margin=1.2):
-    _, binary_mask = cv2.threshold(mask.astype(np.uint8), 0, 255, cv2.THRESH_BINARY)
+    # Ensure mask is binary
+    binary_mask = (mask > 0).astype(np.uint8)
+    
+    # Find contours
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
     objects = []
     for contour in contours:
+        # Get the bounding rect
         x, y, w, h = cv2.boundingRect(contour)
         
         # Calculate center
@@ -24,8 +28,8 @@ def find_objects(mask, margin=1.2):
         center_y = y + h / 2
         
         # Apply margin
-        w_with_margin = w * margin
-        h_with_margin = h * margin
+        w_with_margin = min(w * margin, mask.shape[1])
+        h_with_margin = min(h * margin, mask.shape[0])
         
         # Ensure the box doesn't exceed image boundaries
         x_min = max(0, center_x - w_with_margin / 2)
@@ -43,22 +47,17 @@ def find_objects(mask, margin=1.2):
         width = w_final / mask.shape[1]
         height = h_final / mask.shape[0]
         
-        objects.append([0, center_x, center_y, width, height])  # 0 is the class index for airway
+        # Only add if the object is not covering the entire image
+        if width < 0.9 and height < 0.9:
+            objects.append([0, center_x, center_y, width, height])  # 0 is the class index for airway
     
     return objects
 
 def save_image(img, filename):
-    # Normalize to [0, 1]
-    img_normalized = (img - img.min()) / (img.max() - img.min())
-    
-    # Standardize to zero mean and unit variance
-    img_standardized = (img_normalized - np.mean(img_normalized)) / np.std(img_normalized)
-    
     # Rescale to [0, 255] for saving as PNG
-    img_rescaled = ((img_standardized - img_standardized.min()) / (img_standardized.max() - img_standardized.min()) * 255).astype(np.uint8)
-    
-    Image.fromarray(img_rescaled).save(filename)
-    print(f"Saved normalized and standardized image: {filename}")
+    img_rescaled = (img * 255).astype(np.uint8)
+    Image.fromarray(img_rescaled, model='L').save(filename)
+    print(f"Saved image: {filename}")
 
 def save_yolo_annotation(objects, filename):
     with open(filename, 'w') as f:
@@ -66,21 +65,63 @@ def save_yolo_annotation(objects, filename):
             f.write(' '.join(map(str, obj)) + '\n')
     print(f"Saved annotation: {filename}")
 
-def resample_volume(volume, target_shape=(256, 256, 256), target_spacing=(0.6, 0.6, 0.6)):
-    current_spacing = volume.header.get_zooms()
+def resample_volume(volume, target_spacing=(0.6, 0.6, 0.6), is_mask=False):
+    # Get current spacing and shape
+    current_spacing = volume.header.get_zooms()[:3]
+    current_shape = volume.shape[:3]
+
+    # Calculate the scaling factors
     scale_factors = [c / t for c, t in zip(current_spacing, target_spacing)]
-    resampled = zoom(volume.get_fdata(), scale_factors, order=3)  # order=3 for linear interpolation
+
+    # Calculate new shape to maintain FOV
+    new_shape = np.round(current_shape * np.array(scale_factors)).astype(int)
+
+    # Resample
+    if is_mask:
+        resampled = zoom(volume.get_fdata(), scale_factors, order=0, mode='nearest')
+        resampled = (resampled > 0.5).astype(np.uint8)
+    else:
+        resampled = zoom(volume.get_fdata(), scale_factors, order=3, mode='constant')
+
+    # Calculate the actual achieved spacing
+    achieved_spacing = [c * s / n for c, s, n in zip(current_spacing, current_shape, new_shape)]
+
+    return resampled, achieved_spacing
+
+def normalize_image(image):
     
-    # Pad or crop to exactly 256x256x256
-    pad_width = [(max(t - s, 0) // 2, max(t - s, 0) - max(t - s, 0) // 2) for t, s in zip(target_shape, resampled.shape)]
-    cropped = resampled[
-        max(0, (resampled.shape[0] - target_shape[0]) // 2):min(resampled.shape[0], (resampled.shape[0] + target_shape[0]) // 2),
-        max(0, (resampled.shape[1] - target_shape[1]) // 2):min(resampled.shape[1], (resampled.shape[1] + target_shape[1]) // 2),
-        max(0, (resampled.shape[2] - target_shape[2]) // 2):min(resampled.shape[2], (resampled.shape[2] + target_shape[2]) // 2)
-    ]
-    padded = np.pad(cropped, pad_width, mode='constant')
+    # Center around 0 with standard deviation 1
+    centered = (image - image.mean()) / image.std()
+    # Normalize to [0, 1]
+    normalized = (centered - centered.min()) / (centered.max() - centered.min())
     
-    return padded
+    return normalized
+
+def save_nifti(data, original_img, new_spacing, filename):
+    # Create a new affine matrix with the new spacing
+    new_affine = original_img.affine.copy()
+    np.fill_diagonal(new_affine[:3, :3], new_spacing)
+
+    # Create a new NIfTI image
+    new_img = nib.Nifti1Image(data, new_affine)
+    
+    # Update header information
+    new_header = new_img.header
+    new_header.set_zooms(new_spacing)
+    new_header.set_data_dtype(data.dtype)
+    
+    # Copy relevant header fields from the original image
+    for field in ['descrip', 'intent_name', 'qform_code', 'sform_code']:
+        if field in original_img.header:
+            setattr(new_header, field, original_img.header[field])
+    
+    # Update qform and sform
+    new_img.set_qform(new_affine)
+    new_img.set_sform(new_affine)
+    
+    # Save the image
+    nib.save(new_img, filename)
+    print(f"Saved NIfTI file: {filename}")
 
 def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
     print(f"Processing MRI: {mri_path}")
@@ -93,19 +134,37 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
     mri_img = nib.as_closest_canonical(mri_img)
     mask_img = nib.as_closest_canonical(mask_img)
     
-    # Resample to 256x256x256 with 0.6mm spacing
-    mri_resampled = resample_volume(mri_img)
-    mask_resampled = resample_volume(mask_img)
+    # Resample to target spacing while maintaining FOV
+    mri_resampled, mri_spacing = resample_volume(mri_img)
+    mask_resampled, mask_spacing = resample_volume(mask_img, is_mask=True)
     
-    # Binarize the mask
-    mask_resampled = (mask_resampled > 0).astype(np.float32)
+    print(f"Original MRI shape: {mri_img.shape}, Resampled MRI shape: {mri_resampled.shape}")
+    print(f"Original Mask shape: {mask_img.shape}, Resampled Mask shape: {mask_resampled.shape}")
+    print(f"New spacing: {mri_spacing}")
     
-    print(f"Resampled MRI shape: {mri_resampled.shape}")
-    print(f"Resampled Mask shape: {mask_resampled.shape}")
+    # Normalize and center the resampled MRI
+    mri_normalized = normalize_image(mri_resampled)
+    
+    # Save resampled MRI and mask as NIfTI
+    resampled_dir = os.path.join(output_dir, "resampled")
+    normal_resampled_dir = os.path.join(output_dir, "normal_resampled")
+    os.makedirs(os.path.join(resampled_dir, "images"), exist_ok=True)
+    os.makedirs(os.path.join(resampled_dir, "masks"), exist_ok=True)
+    os.makedirs(os.path.join(normal_resampled_dir, "images"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "labels"), exist_ok=True)
+    
+    mri_resampled_path = os.path.join(resampled_dir, "images", f"{subject_id}_mri_resampled.nii.gz")
+    mask_resampled_path = os.path.join(resampled_dir, "masks", f"{subject_id}_mask_resampled.nii.gz")
+    mri_normalized_path = os.path.join(normal_resampled_dir, "images", f"{subject_id}_mri_normalized.nii.gz")
+    
+    save_nifti(mri_resampled, mri_img, mri_spacing, mri_resampled_path)
+    save_nifti(mask_resampled, mask_img, mask_spacing, mask_resampled_path)
+    save_nifti(mri_normalized, mri_img, mri_spacing, mri_normalized_path)
     
     # Process coronal slices
-    for i in range(mri_resampled.shape[1]):  # Coronal slices
-        slice_img = mri_resampled[:,i,:]
+    for i in range(mri_normalized.shape[1]):  # Coronal slices
+        slice_img = mri_normalized[:,i,:]
         slice_mask = mask_resampled[:,i,:]
         
         objects = find_objects(slice_mask)
@@ -117,7 +176,7 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
             txt_filename = f"{output_dir}/labels/{subject_id}_{i:03d}.txt"
             save_yolo_annotation(objects, txt_filename)
         else:
-            print(f"No objects found in coronal slice {i} of {subject_id}")
+            print(f"No valid objects found in coronal slice {i} of {subject_id}")
     
     print(f"Processed all coronal slices for {subject_id}")
 
@@ -129,6 +188,8 @@ def process_all_mri_data(image_dir, mask_dir, output_dir):
 
     os.makedirs(f"{output_dir}/images", exist_ok=True)
     os.makedirs(f"{output_dir}/labels", exist_ok=True)
+    os.makedirs(f"{output_dir}/resampled/images", exist_ok=True)
+    os.makedirs(f"{output_dir}/resampled/masks", exist_ok=True)
 
     print(f"Contents of image directory:")
     print(os.listdir(image_dir))
@@ -189,14 +250,15 @@ def create_data_yaml(output_dir):
         'train': os.path.join(current_dir, output_dir, 'train', 'images'),
         'val': os.path.join(current_dir, output_dir, 'val', 'images'),
         'nc': 1,
-        'names': ['airway']
+        'names': ['airway'],
+        'ch': 1 # number of channeld, 1 ffor gray
     }
 
     with open(f"{output_dir}/data.yaml", 'w') as f:
         yaml.dump(data, f)
     print("data.yaml created")
 
-def train_yolo_model(output_dir, epochs=400):
+def train_yolo_model(output_dir, epochs=1):
     print(f"Training YOLOv8 model with data from {output_dir}")
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -225,6 +287,7 @@ if __name__ == "__main__":
     image_dir = "./images"
     mask_dir = "./masks"
     output_dir = "yolo_data"
+    os.makedirs(output_dir, exist_ok=True)
 
     print(f"Starting script execution")
     print(f"Working directory: {os.getcwd()}")
