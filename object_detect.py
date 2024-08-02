@@ -8,8 +8,8 @@ from ultralytics import YOLO
 import matplotlib.pyplot as plt
 import cv2
 import glob
-import torch # maks sure impot torch for checking GPU availability
-import matplotlib.pyplot as plt
+import torch
+from scipy.ndimage import zoom
 
 def find_objects(mask):
     _, binary_mask = cv2.threshold(mask.astype(np.uint8), 0, 255, cv2.THRESH_BINARY)
@@ -27,9 +27,17 @@ def find_objects(mask):
     return objects
 
 def save_image(img, filename):
-    img = ((img - img.min()) / (img.max() - img.min()) * 255).astype(np.uint8)
-    Image.fromarray(img).save(filename)
-    print(f"Saved image: {filename}")
+    # Normalize to [0, 1]
+    img_normalized = (img - img.min()) / (img.max() - img.min())
+    
+    # Standardize to zero mean and unit variance
+    img_standardized = (img_normalized - np.mean(img_normalized)) / np.std(img_normalized)
+    
+    # Rescale to [0, 255] for saving as PNG
+    img_rescaled = ((img_standardized - img_standardized.min()) / (img_standardized.max() - img_standardized.min()) * 255).astype(np.uint8)
+    
+    Image.fromarray(img_rescaled).save(filename)
+    print(f"Saved normalized and standardized image: {filename}")
 
 def save_yolo_annotation(objects, filename):
     with open(filename, 'w') as f:
@@ -37,22 +45,47 @@ def save_yolo_annotation(objects, filename):
             f.write(' '.join(map(str, obj)) + '\n')
     print(f"Saved annotation: {filename}")
 
+def resample_volume(volume, target_shape=(256, 256, 256), target_spacing=(0.6, 0.6, 0.6)):
+    current_spacing = volume.header.get_zooms()
+    scale_factors = [c / t for c, t in zip(current_spacing, target_spacing)]
+    resampled = zoom(volume.get_fdata(), scale_factors, order=3)  # order=3 for linear interpolation
+    
+    # Pad or crop to exactly 256x256x256
+    pad_width = [(max(t - s, 0) // 2, max(t - s, 0) - max(t - s, 0) // 2) for t, s in zip(target_shape, resampled.shape)]
+    cropped = resampled[
+        max(0, (resampled.shape[0] - target_shape[0]) // 2):min(resampled.shape[0], (resampled.shape[0] + target_shape[0]) // 2),
+        max(0, (resampled.shape[1] - target_shape[1]) // 2):min(resampled.shape[1], (resampled.shape[1] + target_shape[1]) // 2),
+        max(0, (resampled.shape[2] - target_shape[2]) // 2):min(resampled.shape[2], (resampled.shape[2] + target_shape[2]) // 2)
+    ]
+    padded = np.pad(cropped, pad_width, mode='constant')
+    
+    return padded
+
 def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
     print(f"Processing MRI: {mri_path}")
     print(f"Processing Mask: {mask_path}")
-    mri = nib.load(mri_path).get_fdata()
-    mask = nib.load(mask_path).get_fdata()
     
-    print(f"MRI shape: {mri.shape}")
-    print(f"Mask shape: {mask.shape}")
+    # Load and reorient MRI and mask
+    mri_img = nib.load(mri_path)
+    mask_img = nib.load(mask_path)
     
-    # Determine the number of slices to process
-    num_slices = min(mri.shape[2], mask.shape[2])
-    print(f"Processing {num_slices} slices")
+    mri_img = nib.as_closest_canonical(mri_img)
+    mask_img = nib.as_closest_canonical(mask_img)
     
-    for i in range(num_slices):
-        slice_img = mri[:,:,i]
-        slice_mask = mask[:,:,i]
+    # Resample to 256x256x256 with 0.6mm spacing
+    mri_resampled = resample_volume(mri_img)
+    mask_resampled = resample_volume(mask_img)
+    
+    # Binarize the mask
+    mask_resampled = (mask_resampled > 0).astype(np.float32)
+    
+    print(f"Resampled MRI shape: {mri_resampled.shape}")
+    print(f"Resampled Mask shape: {mask_resampled.shape}")
+    
+    # Process coronal slices
+    for i in range(mri_resampled.shape[1]):  # Coronal slices
+        slice_img = mri_resampled[:,i,:]
+        slice_mask = mask_resampled[:,i,:]
         
         objects = find_objects(slice_mask)
         
@@ -63,9 +96,9 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
             txt_filename = f"{output_dir}/labels/{subject_id}_{i:03d}.txt"
             save_yolo_annotation(objects, txt_filename)
         else:
-            print(f"No objects found in slice {i} of {subject_id}")
+            print(f"No objects found in coronal slice {i} of {subject_id}")
     
-    print(f"Processed {num_slices} slices for {subject_id}")
+    print(f"Processed all coronal slices for {subject_id}")
 
 def process_all_mri_data(image_dir, mask_dir, output_dir):
     print(f"Processing all MRI data:")
@@ -162,7 +195,6 @@ def train_yolo_model(output_dir, epochs=400):
         # The model is automatically saved after training
         print(f"Model saved at: {results.save_dir}")
         
-        
     except Exception as e:
         print(f"An error occurred during training: {str(e)}")
     
@@ -195,7 +227,6 @@ if __name__ == "__main__":
                 print(f"path {full_path} not exist")
                 print("will create them")
                 os.makedirs(full_path, exist_ok=True)
-                #raise FileNotFoundError(f"Expected directory not found: {full_path}")
             else:
                 print(f"Full path for yolo training: {full_path}")
 
