@@ -56,7 +56,7 @@ def find_objects(mask, margin=1.2):
 def save_image(img, filename):
     # Rescale to [0, 255] for saving as PNG
     img_rescaled = (img * 255).astype(np.uint8)
-    Image.fromarray(img_rescaled, model='L').save(filename)
+    Image.fromarray(img_rescaled, mode='L').save(filename)
     print(f"Saved image: {filename}")
 
 def save_yolo_annotation(objects, filename):
