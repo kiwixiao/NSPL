@@ -42,8 +42,8 @@ def normalize_image(image):
 def preprocess_slice(slice_img, input_size=(640, 640)):
     slice_img_normalized = normalize_image(slice_img)
     slice_img_resized = cv2.resize(slice_img_normalized, input_size)
-    slice_img_rgb = np.stack([slice_img_resized] * 3, axis=-1)  # Convert to 3-channel
-    return slice_img_rgb
+    slice_img_single_channel = slice_img_resized.reshape(1, input_size[0], input_size[1], 1)  # 
+    return slice_img_single_channel
 
 def inference_on_mri(model, mri_path):
     print(f"Performing inference on {mri_path}")
