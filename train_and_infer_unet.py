@@ -57,22 +57,20 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=50):
         train_batches = 0
         
         # Use tqdm for a progress bar
-        with tqdm(train_loader, unit="batch") as tepoch:
-            for data, target in tepoch:
-                tepoch.set_description(f"Epoch {epoch+1}")
-                
-                data, target = data.to(device), target.to(device)
-                optimizer.zero_grad()
-                output = model(data)
-                loss = criterion(output, target)
-                loss.backward()
-                optimizer.step()
-                
-                train_loss += loss.item()
-                train_batches += 1
-                
-                # Update progress bar
-                tepoch.set_postfix(loss=train_loss/train_batches)
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
+        for data, target in progress_bar:
+            data, target = data.to(device), target.to(device)
+            optimizer.zero_grad()
+            output = model(data)
+            loss = criterion(output, target)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            train_batches += 1
+            
+            # Update progress bar
+            progress_bar.set_postfix({'loss': f'{train_loss/train_batches:.4f}'})
         
         # Calculate average training loss for the epoch
         avg_train_loss = train_loss / train_batches
