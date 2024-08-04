@@ -189,7 +189,7 @@ if __name__ == "__main__":
         val_loader = DataLoader(val_dataset, batch_size=32)
         
         # Create and train UNet model
-        unet_model = UNet(n_channels=1, n_classes=1).to(device)
+        unet_model = UNet(n_channels=1, n_classes=1).to(device) # make sure the data pass to device. 
         check_input_dimension(unet_model)
         
         # Log the start of training
