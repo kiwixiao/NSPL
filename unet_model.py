@@ -7,6 +7,9 @@ import torch.nn as nn
 import torchviz
 import logging
 
+# Set up device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 class DoubleConv(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -86,12 +89,12 @@ def save_model_architecture(model, input_size=(1, 1, 256, 256), filename='unet_a
     dot.render(filename, format='png', cleanup=True)
     logging.info(f"Model architecture saved as {filename}")
 
-def check_input_dimension(model, input_size=(1, 1, 256, 256)):
+def check_input_dimension(model, input_size=(1, 1, 256, 256), device=device):
     """
     Check if the input dimension matches the model's expected input.
     """
     try:
-        x = torch.randn(input_size)
+        x = torch.randn(input_size).to(device)
         _ = model(x)
         logging.info(f"Input dimension check passed. Model accepts input size: {input_size}")
     except RuntimeError as e:
@@ -108,4 +111,4 @@ if __name__ == "__main__":
     save_model_architecture(model)
     
     # Check input dimension
-    check_input_dimension(model)
+    check_input_dimension(model, device=device)

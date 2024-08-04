@@ -43,7 +43,7 @@ class AirwayDataset(Dataset):
             image = self.transform(image)
             mask = self.transform(mask)
         
-        return image, mask
+        return image.to(device), mask.to(device)
 
 def train_unet(model, train_loader, val_loader, device, num_epochs=50):
     criterion = nn.BCEWithLogitsLoss()
@@ -59,7 +59,7 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=50):
         # Use tqdm for a progress bar
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
         for data, target in progress_bar:
-            data, target = data.to(device), target.to(device)
+            #data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
