@@ -45,7 +45,7 @@ class AirwayDataset(Dataset):
         
         return image.to(device), mask.to(device)
 
-def train_unet(model, train_loader, val_loader, device, num_epochs=50):
+def train_unet(model, train_loader, val_loader, device, num_epochs=500):
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
