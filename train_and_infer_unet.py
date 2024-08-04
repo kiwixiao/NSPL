@@ -14,6 +14,8 @@ import nibabel as nib
 from scipy.ndimage import zoom
 import argparse
 import logging
+import time
+from tqdm import tqdm
 
 class AirwayDataset(Dataset):
     def __init__(self, image_dir, mask_dir, transform=None):
@@ -47,26 +49,59 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=50):
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
+    best_val_loss = float('inf')
+    
     for epoch in range(num_epochs):
         model.train()
-        for batch_idx, (data, target) in enumerate(train_loader):
-            data, target = data.to(device), target.to(device)
-            optimizer.zero_grad()
-            output = model(data)
-            loss = criterion(output, target)
-            loss.backward()
-            optimizer.step()
+        train_loss = 0.0
+        train_batches = 0
         
+        # Use tqdm for a progress bar
+        with tqdm(train_loader, unit="batch") as tepoch:
+            for data, target in tepoch:
+                tepoch.set_description(f"Epoch {epoch+1}")
+                
+                data, target = data.to(device), target.to(device)
+                optimizer.zero_grad()
+                output = model(data)
+                loss = criterion(output, target)
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+                train_batches += 1
+                
+                # Update progress bar
+                tepoch.set_postfix(loss=train_loss/train_batches)
+        
+        # Calculate average training loss for the epoch
+        avg_train_loss = train_loss / train_batches
+        
+        # Validation
         model.eval()
-        val_loss = 0
+        val_loss = 0.0
+        val_batches = 0
         with torch.no_grad():
             for data, target in val_loader:
                 data, target = data.to(device), target.to(device)
                 output = model(data)
                 val_loss += criterion(output, target).item()
+                val_batches += 1
         
-        logging.info(f'Epoch {epoch+1}, Validation loss: {val_loss/len(val_loader)}')
+        avg_val_loss = val_loss / val_batches
+        
+        # Log the losses
+        logging.info(f'Epoch {epoch+1}/{num_epochs}, '
+                     f'Train Loss: {avg_train_loss:.4f}, '
+                     f'Validation Loss: {avg_val_loss:.4f}')
+        
+        # Save the best model
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), 'best_unet_model.pth')
+            logging.info(f'New best model saved with validation loss: {best_val_loss:.4f}')
     
+    logging.info("Training completed.")
     return model
 
 def preprocess_mri_slice(slice_img, target_size=(256, 256)):
@@ -158,7 +193,16 @@ if __name__ == "__main__":
         # Create and train UNet model
         unet_model = UNet(n_channels=1, n_classes=1).to(device)
         check_input_dimension(unet_model)
+        
+        # Log the start of training
+        logging.info("Starting UNet training...")
+        start_time = time.time()
         trained_unet = train_unet(unet_model, train_loader, val_loader, device)
+        
+        # Log training completion and duration
+        end_time = time.time()
+        training_duration = end_time - start_time
+        logging.info(f"Training completed in {training_duration:.2f} seconds.")
         
         # Save the trained model
         torch.save(trained_unet.state_dict(), 'trained_unet.pth')
