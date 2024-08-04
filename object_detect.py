@@ -289,16 +289,14 @@ def create_data_yaml(output_dir):
         yaml.dump(data, f)
     print("data.yaml created")
 
-def train_yolo_model(output_dir, epochs=500):
-    print(f"Training YOLOv8 model with data from {output_dir}")
+def train_yolo_model(data_yaml_path, epochs=500):
+    print(f"Training YOLOv8 model with data from {data_yaml_path}")
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
     # Load a model
     model = YOLO('yolov8m.yaml')  # build a new model from YAML
-    
-    data_yaml_path = os.path.join(os.getcwd(), output_dir, 'data.yaml')
     
     try:
         # Train the model
@@ -315,56 +313,80 @@ def train_yolo_model(output_dir, epochs=500):
     return model
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process MRI data and optionally train YOLO model")
+    parser = argparse.ArgumentParser(description="Process MRI data and/or train YOLO model")
+    parser.add_argument("--skip_preprocessing", action="store_true", help="Skip preprocessing and use existing data")
+    parser.add_argument("--yolo_data_path", type=str, help="Path to existing YOLO data directory")
     parser.add_argument("--skip_training", action="store_true", help="Skip YOLO model training")
     args = parser.parse_args()
 
-    image_dir = "./images"
-    mask_dir = "./masks"
-    output_dir = "yolo_data"
-    os.makedirs(output_dir, exist_ok=True)
+    if args.skip_preprocessing and args.yolo_data_path:
+        # Use existing preprocessed data
+        output_dir = args.yolo_data_path
+        data_yaml_path = os.path.join(output_dir, 'data.yaml')
+        
+        if not os.path.exists(data_yaml_path):
+            print(f"Error: data.yaml not found in {output_dir}")
+            exit(1)
+        
+        print(f"Using existing preprocessed data from: {output_dir}")
+    else:
+        # Perform preprocessing
+        image_dir = "./images"
+        mask_dir = "./masks"
+        output_dir = "yolo_data"
+        os.makedirs(output_dir, exist_ok=True)
 
-    print(f"Starting script execution")
-    print(f"Working directory: {os.getcwd()}")
-    print(f"Image directory: {image_dir}")
-    print(f"Mask directory: {mask_dir}")
-    print(f"Output directory: {output_dir}")
+        print(f"Starting script execution")
+        print(f"Working directory: {os.getcwd()}")
+        print(f"Image directory: {image_dir}")
+        print(f"Mask directory: {mask_dir}")
+        print(f"Output directory: {output_dir}")
 
-    try:
-        # Check if directories exist
-        for dir_path in [image_dir, mask_dir]:
-            if not os.path.exists(dir_path):
-                raise FileNotFoundError(f"Directory not found: {dir_path}")
+        try:
+            # Check if directories exist
+            for dir_path in [image_dir, mask_dir]:
+                if not os.path.exists(dir_path):
+                    raise FileNotFoundError(f"Directory not found: {dir_path}")
 
-        # Process MRI data
-        process_all_mri_data(image_dir, mask_dir, output_dir)
+            # Process MRI data
+            process_all_mri_data(image_dir, mask_dir, output_dir)
 
-        # Check if output directories were created
-        for subdir in ['images', 'labels', 'images_with_box', 'seg_data/images', 'seg_data/masks']:
-            full_path = os.path.join(output_dir, subdir)
-            if not os.path.exists(full_path):
-                print(f"Path {full_path} does not exist")
-                print("Will create it")
-                os.makedirs(full_path, exist_ok=True)
-            else:
-                print(f"Full path created: {full_path}")
+            # Check if output directories were created
+            for subdir in ['images', 'labels', 'images_with_box', 'seg_data/images', 'seg_data/masks']:
+                full_path = os.path.join(output_dir, subdir)
+                if not os.path.exists(full_path):
+                    print(f"Path {full_path} does not exist")
+                    print("Will create it")
+                    os.makedirs(full_path, exist_ok=True)
+                else:
+                    print(f"Full path created: {full_path}")
 
-        # Split data
-        split_data(output_dir)
+            # Split data
+            split_data(output_dir)
 
-        # Create data.yaml
-        create_data_yaml(output_dir)
+            # Create data.yaml
+            create_data_yaml(output_dir)
 
-        if not args.skip_training:
-            # Train model
-            model = train_yolo_model(output_dir)
+            data_yaml_path = os.path.join(output_dir, 'data.yaml')
+
+            print("Preprocessing completed successfully")
+
+        except Exception as e:
+            print(f"An error occurred during preprocessing: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            exit(1)
+
+    if not args.skip_training:
+        # Train model
+        try:
+            model = train_yolo_model(data_yaml_path)
             print("Model training completed")
-        else:
-            print("Skipping model training as per user request")
+        except Exception as e:
+            print(f"An error occurred during training: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("Skipping model training as per user request")
 
-        print("Script execution completed successfully")
-
-    except Exception as e:
-        print(f"An error occurred: {str(e)}")
-        import traceback
-        traceback.print_exc()
+    print("Script execution completed successfully")
