@@ -18,40 +18,73 @@ def find_objects(mask, margin=1.2):
     # Find contours
     contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
-    objects = []
-    for contour in contours:
-        # Get the bounding rect
-        x, y, w, h = cv2.boundingRect(contour)
-        
-        # Calculate center
-        center_x = x + w / 2
-        center_y = y + h / 2
-        
-        # Apply margin
-        w_with_margin = min(w * margin, mask.shape[1])
-        h_with_margin = min(h * margin, mask.shape[0])
-        
-        # Ensure the box doesn't exceed image boundaries
-        x_min = max(0, center_x - w_with_margin / 2)
-        y_min = max(0, center_y - h_with_margin / 2)
-        x_max = min(mask.shape[1], center_x + w_with_margin / 2)
-        y_max = min(mask.shape[0], center_y + h_with_margin / 2)
-        
-        # Recalculate width and height
-        w_final = x_max - x_min
-        h_final = y_max - y_min
-        
-        # Convert to YOLO format
-        center_x = (x_min + w_final / 2) / mask.shape[1]
-        center_y = (y_min + h_final / 2) / mask.shape[0]
-        width = w_final / mask.shape[1]
-        height = h_final / mask.shape[0]
-        
-        # Only add if the object is not covering the entire image
-        if width < 0.9 and height < 0.9:
-            objects.append([0, center_x, center_y, width, height])  # 0 is the class index for airway
+    if not contours:
+        return None
+
+    # Combine all contours
+    all_points = np.concatenate(contours)
+    x, y, w, h = cv2.boundingRect(all_points)
     
-    return objects
+    # Calculate center
+    center_x = x + w / 2
+    center_y = y + h / 2
+    
+    # Apply margin
+    w_with_margin = min(w * margin, mask.shape[1])
+    h_with_margin = min(h * margin, mask.shape[0])
+    
+    # Ensure the box doesn't exceed image boundaries
+    x_min = max(0, center_x - w_with_margin / 2)
+    y_min = max(0, center_y - h_with_margin / 2)
+    x_max = min(mask.shape[1], center_x + w_with_margin / 2)
+    y_max = min(mask.shape[0], center_y + h_with_margin / 2)
+    
+    # Recalculate width and height
+    w_final = x_max - x_min
+    h_final = y_max - y_min
+    
+    # Convert to YOLO format
+    center_x = (x_min + w_final / 2) / mask.shape[1]
+    center_y = (y_min + h_final / 2) / mask.shape[0]
+    width = w_final / mask.shape[1]
+    height = h_final / mask.shape[0]
+    
+    # Only return if the object is not covering the entire image
+    if width < 0.9 and height < 0.9:
+        return [0, center_x, center_y, width, height]  # 0 is the class index for airway
+    else:
+        return None
+    
+def plot_image_with_box(image, box, output_path):
+    plt.figure(figsize=(10, 10))
+    plt.imshow(image, cmap='gray')
+    plt.axis('off')
+    
+    if box is not None:
+        _, center_x, center_y, width, height = box
+        x = (center_x - width/2) * image.shape[1]
+        y = (center_y - height/2) * image.shape[0]
+        rect = plt.Rectangle((x, y), width * image.shape[1], height * image.shape[0],
+                             fill=False, edgecolor='red', linewidth=2)
+        plt.gca().add_patch(rect)
+    
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.close()
+    
+def save_cropped_data(image, mask, box, image_output_path, mask_output_path):
+    if box is not None:
+        _, center_x, center_y, width, height = box
+        x = int((center_x - width/2) * image.shape[1])
+        y = int((center_y - height/2) * image.shape[0])
+        w = int(width * image.shape[1])
+        h = int(height * image.shape[0])
+        
+        cropped_image = image[y:y+h, x:x+w]
+        cropped_mask = mask[y:y+h, x:x+w]
+        
+        Image.fromarray((cropped_image * 255).astype(np.uint8)).save(image_output_path)
+        Image.fromarray((cropped_mask * 255).astype(np.uint8)).save(mask_output_path)
 
 def save_image(img, filename):
     # Rescale to [0, 255] for saving as PNG
@@ -145,36 +178,33 @@ def process_mri_to_yolo(mri_path, mask_path, output_dir, subject_id):
     # Normalize and center the resampled MRI
     mri_normalized = normalize_image(mri_resampled)
     
-    # Save resampled MRI and mask as NIfTI
-    resampled_dir = os.path.join(output_dir, "resampled")
-    normal_resampled_dir = os.path.join(output_dir, "normal_resampled")
-    os.makedirs(os.path.join(resampled_dir, "images"), exist_ok=True)
-    os.makedirs(os.path.join(resampled_dir, "masks"), exist_ok=True)
-    os.makedirs(os.path.join(normal_resampled_dir, "images"), exist_ok=True)
+    # Create output directories
     os.makedirs(os.path.join(output_dir, "images"), exist_ok=True)
     os.makedirs(os.path.join(output_dir, "labels"), exist_ok=True)
-    
-    mri_resampled_path = os.path.join(resampled_dir, "images", f"{subject_id}_mri_resampled.nii.gz")
-    mask_resampled_path = os.path.join(resampled_dir, "masks", f"{subject_id}_mask_resampled.nii.gz")
-    mri_normalized_path = os.path.join(normal_resampled_dir, "images", f"{subject_id}_mri_normalized.nii.gz")
-    
-    save_nifti(mri_resampled, mri_img, mri_spacing, mri_resampled_path)
-    save_nifti(mask_resampled, mask_img, mask_spacing, mask_resampled_path)
-    save_nifti(mri_normalized, mri_img, mri_spacing, mri_normalized_path)
+    os.makedirs(os.path.join(output_dir, "images_with_box"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "seg_data", "images"), exist_ok=True)
+    os.makedirs(os.path.join(output_dir, "seg_data", "masks"), exist_ok=True)
     
     # Process coronal slices
     for i in range(mri_normalized.shape[1]):  # Coronal slices
         slice_img = mri_normalized[:,i,:]
         slice_mask = mask_resampled[:,i,:]
         
-        objects = find_objects(slice_mask)
+        box = find_objects(slice_mask)
         
-        if objects:
+        if box is not None:
             img_filename = f"{output_dir}/images/{subject_id}_{i:03d}.png"
             save_image(slice_img, img_filename)
             
             txt_filename = f"{output_dir}/labels/{subject_id}_{i:03d}.txt"
-            save_yolo_annotation(objects, txt_filename)
+            save_yolo_annotation([box], txt_filename)
+            
+            box_img_filename = f"{output_dir}/images_with_box/{subject_id}_{i:03d}.png"
+            plot_image_with_box(slice_img, box, box_img_filename)
+            
+            seg_img_filename = f"{output_dir}/seg_data/images/{subject_id}_{i:03d}.png"
+            seg_mask_filename = f"{output_dir}/seg_data/masks/{subject_id}_{i:03d}.png"
+            save_cropped_data(slice_img, slice_mask, box, seg_img_filename, seg_mask_filename)
         else:
             print(f"No valid objects found in coronal slice {i} of {subject_id}")
     
@@ -305,14 +335,14 @@ if __name__ == "__main__":
         process_all_mri_data(image_dir, mask_dir, output_dir)
 
         # Check if output directories were created
-        for subdir in ['train/images', 'train/labels', 'val/images', 'val/labels']:
+        for subdir in ['images', 'labels', 'images_with_box', 'seg_data/images', 'seg_data/masks']:
             full_path = os.path.join(output_dir, subdir)
             if not os.path.exists(full_path):
-                print(f"path {full_path} not exist")
-                print("will create them")
+                print(f"Path {full_path} does not exist")
+                print("Will create it")
                 os.makedirs(full_path, exist_ok=True)
             else:
-                print(f"Full path for yolo training: {full_path}")
+                print(f"Full path created: {full_path}")
 
         # Split data
         split_data(output_dir)
@@ -321,7 +351,7 @@ if __name__ == "__main__":
         create_data_yaml(output_dir)
 
         # Train model
-        model = train_yolo_model(output_dir)
+        #model = train_yolo_model(output_dir)
 
         print("Script execution completed successfully")
 
