@@ -50,7 +50,7 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=500, save_dir
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
-    os.makefirs(save_dir, exist_ok=True)
+    os.makedirs(save_dir, exist_ok=True)
     best_val_loss = float('inf')
     train_losses = []
     val_losses = []
