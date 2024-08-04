@@ -16,6 +16,7 @@ import argparse
 import logging
 import time
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 class AirwayDataset(Dataset):
     def __init__(self, image_dir, mask_dir, transform=None):
@@ -45,11 +46,14 @@ class AirwayDataset(Dataset):
         
         return image.to(device), mask.to(device)
 
-def train_unet(model, train_loader, val_loader, device, num_epochs=500):
+def train_unet(model, train_loader, val_loader, device, num_epochs=500, save_dir='unet_checkpoints'):
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     
+    os.makefirs(save_dir, exist_ok=True)
     best_val_loss = float('inf')
+    train_losses = []
+    val_losses = []
     
     for epoch in range(num_epochs):
         model.train()
@@ -59,7 +63,7 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=500):
         # Use tqdm for a progress bar
         progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}")
         for data, target in progress_bar:
-            #data, target = data.to(device), target.to(device)
+            data, target = data.to(device), target.to(device)
             optimizer.zero_grad()
             output = model(data)
             loss = criterion(output, target)
@@ -74,6 +78,7 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=500):
         
         # Calculate average training loss for the epoch
         avg_train_loss = train_loss / train_batches
+        train_losses.append(avg_train_loss)
         
         # Validation
         model.eval()
@@ -87,20 +92,61 @@ def train_unet(model, train_loader, val_loader, device, num_epochs=500):
                 val_batches += 1
         
         avg_val_loss = val_loss / val_batches
+        val_losses.append(avg_val_loss)
         
         # Log the losses
         logging.info(f'Epoch {epoch+1}/{num_epochs}, '
                      f'Train Loss: {avg_train_loss:.4f}, '
                      f'Validation Loss: {avg_val_loss:.4f}')
+        # save the model every 50 epochs
+        if (epoch + 1) % 50 == 0:
+            torch.save(model.state_dict(), os.path.join(save_dir, f"unet_epoch_{epoch+1}.pth"))
+            logging.info(f'Model saved at epoch {epoch+1}')
+            
         
         # Save the best model
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(model.state_dict(), 'best_unet_model.pth')
+            torch.save(model.state_dict(), os.path.join(save_dir, 'best_unet_model.pth'))
             logging.info(f'New best model saved with validation loss: {best_val_loss:.4f}')
     
-    logging.info("Training completed.")
-    return model
+    # Save the final model
+    torch.save(model.state_dict(), os.path.join(save_dir, 'final_unet_model.pth'))
+    logging.info("Training completed. Final model saved.")
+    
+    # Plot and save training metrics
+    plot_training_metrics(train_losses, val_losses, save_dir)
+    
+    return model, train_losses, val_losses
+
+def plot_training_metrics(train_losses, val_losses, save_dir):
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label='Training Loss')
+    plt.plot(val_losses, label='Validation Loss')
+    plt.title('Training and Validation Losses')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(os.path.join(save_dir, 'loss_plot.png'))
+    plt.close()
+
+    # Plot training loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses)
+    plt.title('Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.savefig(os.path.join(save_dir, 'train_loss_plot.png'))
+    plt.close()
+
+    # Plot validation loss
+    plt.figure(figsize=(10, 5))
+    plt.plot(val_losses)
+    plt.title('Validation Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.savefig(os.path.join(save_dir, 'val_loss_plot.png'))
+    plt.close()
 
 def preprocess_mri_slice(slice_img, target_size=(256, 256)):
     # Normalize the slice
@@ -195,15 +241,15 @@ if __name__ == "__main__":
         # Log the start of training
         logging.info("Starting UNet training...")
         start_time = time.time()
-        trained_unet = train_unet(unet_model, train_loader, val_loader, device)
         
+        trained_model, train_losses, val_losses = train_unet(unet_model, train_loader, 
+                                                             val_loader, device, num_epochs=500, save_dir='unet_checkpoints')
+
         # Log training completion and duration
         end_time = time.time()
         training_duration = end_time - start_time
         logging.info(f"Training completed in {training_duration:.2f} seconds.")
         
-        # Save the trained model
-        torch.save(trained_unet.state_dict(), 'trained_unet.pth')
         logging.info("Training completed and model saved")
     
     elif args.mode == 'infer':
