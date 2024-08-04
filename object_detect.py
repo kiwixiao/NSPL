@@ -10,6 +10,7 @@ import cv2
 import glob
 import torch
 from scipy.ndimage import zoom
+import argparse
 
 def find_objects(mask, margin=1.2):
     # Ensure mask is binary
@@ -314,6 +315,10 @@ def train_yolo_model(output_dir, epochs=500):
     return model
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process MRI data and optionally train YOLO model")
+    parser.add_argument("--skip_training", action="store_true", help="Skip YOLO model training")
+    args = parser.parse_args()
+
     image_dir = "./images"
     mask_dir = "./masks"
     output_dir = "yolo_data"
@@ -350,8 +355,12 @@ if __name__ == "__main__":
         # Create data.yaml
         create_data_yaml(output_dir)
 
-        # Train model
-        #model = train_yolo_model(output_dir)
+        if not args.skip_training:
+            # Train model
+            model = train_yolo_model(output_dir)
+            print("Model training completed")
+        else:
+            print("Skipping model training as per user request")
 
         print("Script execution completed successfully")
 
