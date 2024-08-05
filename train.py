@@ -9,6 +9,7 @@ from utils.visualization import plot_training_curves
 import logging
 import os
 from tqdm import tqdm, trange
+from collections import OrderedDict
 
 class DiceBCELoss(nn.Module):
     def __init__(self):
@@ -100,10 +101,23 @@ def validate(model, val_loader, criterion, device):
     
     return val_loss / len(val_loader)
 
+def average_models(model_states):
+    """
+    Average a list of model state dictionaries.
+    """
+    average_state = OrderedDict()
+    for key in model_states[0].keys():
+        average_state[key] = sum(state[key] for state in model_states) / len(model_states)
+    return average_state
+
 def train_kfold(model_class, dataset, num_epochs, device, n_splits=5, img_size=(256, 256), output_dir='./', model_name='model'):
     kfolds = create_kfolds(dataset, n_splits=n_splits)
     
     fold_bar = tqdm(enumerate(kfolds), total=n_splits, desc="Folds")
+    
+    # List to store state dictionaries of best models from each fold
+    best_models = []
+    
     for fold, (train_idx, val_idx) in fold_bar:
         logging.info(f"Training fold {fold+1}/{n_splits}")
         fold_bar.set_postfix({"Fold": f"{fold+1}/{n_splits}"})
@@ -122,5 +136,18 @@ def train_kfold(model_class, dataset, num_epochs, device, n_splits=5, img_size=(
         train_losses, val_losses = train_fold(model, train_loader, val_loader, num_epochs, device, fold_output_dir, model_name)
         
         plot_training_curves(train_losses, val_losses, os.path.join(fold_output_dir, f'loss_plot_{model_name}.png'))
+        
+        # Load the best model from this fold and add to the list
+        best_model_path = os.path.join(fold_output_dir, f'best_model_{model_name}.pth')
+        best_model_state = torch.load(best_model_path, map_location=device)
+        best_models.append(best_model_state)
     
     logging.info("K-fold cross-validation completed")
+    
+    # Average the models
+    average_model_state = average_models(best_models)
+    
+    # Save the averaged model
+    average_model_path = os.path.join(output_dir, f'average_model_{model_name}.pth')
+    torch.save(average_model_state, average_model_path)
+    logging.info(f"Saved averaged model to: {average_model_path}")
