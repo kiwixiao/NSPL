@@ -1,9 +1,13 @@
 # ignore all
 *
-# not
+# not dirs
+!/*
+# whitelist files
 !*.py
 !*.sh
 !*.md
 !*.txt
 !*.m
 !.gitignore
+# ignore
+*.pt
