@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchviz import make_dot
-from graphviz import Digraph
 import os
 
 class ConvBlock(nn.Module):
@@ -61,41 +60,59 @@ class FlexibleUNet(nn.Module):
         self.deep_sup1 = self.conv(32, num_classes, kernel_size=1)
     
     def forward(self, x):
+        #print(f"Input shape: {x.shape}")
+
+        # Encoder path
         conv1 = self.down_conv1(x)
         x = self.maxpool(conv1)
-        
+        #print(f"After conv1: {x.shape}")
+
         conv2 = self.down_conv2(x)
         x = self.maxpool(conv2)
-        
+        #print(f"After conv2: {x.shape}")
+
         conv3 = self.down_conv3(x)
         x = self.maxpool(conv3)
-        
+        #print(f"After conv3: {x.shape}")
+
         conv4 = self.down_conv4(x)
         x = self.maxpool(conv4)
-        
+        #print(f"After conv4: {x.shape}")
+
         x = self.down_conv5(x)
-        
+        #print(f"After down_conv5: {x.shape}")
+
+        # Decoder path
         x = self.upsample(x)
+        x = self.ensure_size_match(x, conv4)
         x = torch.cat([x, conv4], dim=1)
         x = self.up_conv4(x)
-        
+        #print(f"After up_conv4: {x.shape}")
+
         x = self.upsample(x)
+        x = self.ensure_size_match(x, conv3)
         x = torch.cat([x, conv3], dim=1)
         x = self.up_conv3(x)
         deep_sup3 = self.deep_sup3(x)
-        
+        #print(f"After up_conv3: {x.shape}")
+
         x = self.upsample(x)
+        x = self.ensure_size_match(x, conv2)
         x = torch.cat([x, conv2], dim=1)
         x = self.up_conv2(x)
         deep_sup2 = self.deep_sup2(x)
-        
+        #print(f"After up_conv2: {x.shape}")
+
         x = self.upsample(x)
+        x = self.ensure_size_match(x, conv1)
         x = torch.cat([x, conv1], dim=1)
         x = self.up_conv1(x)
         deep_sup1 = self.deep_sup1(x)
-        
+        #print(f"After up_conv1: {x.shape}")
+
         out = self.final_conv(x)
-        
+        #print(f"Final output shape: {out.shape}")
+
         if self.num_classes == 1:
             out = torch.sigmoid(out)
             if self.training:
@@ -108,14 +125,21 @@ class FlexibleUNet(nn.Module):
                 deep_sup1 = F.softmax(deep_sup1, dim=1)
                 deep_sup2 = F.softmax(deep_sup2, dim=1)
                 deep_sup3 = F.softmax(deep_sup3, dim=1)
-        
+
         if self.training:
             return out, deep_sup1, deep_sup2, deep_sup3
         else:
             return out
 
+    def ensure_size_match(self, x, target):
+        if x.shape[2:] != target.shape[2:]:
+            return F.interpolate(x, size=target.shape[2:], mode='trilinear' if self.dimensions == 3 else 'bilinear', align_corners=False)
+        return x
+
 def create_nnunet(in_channels, num_classes, dimensions=3):
-    return FlexibleUNet(in_channels, num_classes, dimensions)
+    model = FlexibleUNet(in_channels, num_classes, dimensions)
+    print(f"Model expects input shape: (batch_size, {in_channels}, depth, height, width)")
+    return model
 
 def save_model_architecture(model, input_size, output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -127,31 +151,6 @@ def save_model_architecture(model, input_size, output_dir):
     y = model(x)
     dot = make_dot(y, params=dict(model.named_parameters()))
     
-    # Customize the graph
-    dot.attr(rankdir='TB', size='12,12')
-    dot.attr('node', shape='record')
-    
-    for node in dot.graph.get_nodes():
-        if node.get_name().startswith('node'):
-            label = node.get_attributes()['label']
-            if 'ConvBlock' in label or 'Conv' in label:
-                parts = label.split('\\n')
-                if len(parts) > 1:
-                    shape_info = parts[1].strip('()')
-                    input_shape, output_shape = shape_info.split(' -> ')
-                    new_label = f"{parts[0]}|{{{input_shape}|{output_shape}}}"
-                    node.set_attributes({'label': new_label})
-    
     # Save the diagram as a PNG file
     dot.render(os.path.join(output_dir, 'model_architecture'), format='png', cleanup=True)
     print(f"Model architecture diagram saved to {output_dir}/model_architecture.png")
-
-if __name__ == "__main__":
-    # Example usage
-    in_channels = 1
-    num_classes = 1
-    dimensions = 3
-    input_size = (in_channels, 128, 128, 128)  # Example input size (adjust as needed)
-    
-    model = create_nnunet(in_channels, num_classes, dimensions)
-    save_model_architecture(model, input_size, output_dir='model_diagrams')

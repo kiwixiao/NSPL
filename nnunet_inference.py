@@ -6,6 +6,7 @@ from nnunet_preprocessing import preprocess_case
 from nnunet_postprocessing import postprocess_prediction
 import os
 from PIL import Image
+from scipy.ndimage import zoom
 
 def load_model(model_path, in_channels, num_classes):
     model = create_nnunet(in_channels, num_classes, dimensions=3)
@@ -20,40 +21,52 @@ def inference_on_case(model, image_path, mask_path=None, output_path=None, input
     # Preprocess the image
     preprocessed_image, _, affine = preprocess_case(image_path, mask_path, input_type=input_type)
     
-    # Load original image to get its shape and affine
-    if input_type == 'nifti':
-        original_image = nib.load(image_path)
-        original_shape = original_image.shape
-        original_affine = original_image.affine
-    
     # Prepare input for the model
     input_tensor = torch.from_numpy(preprocessed_image).float().unsqueeze(0).unsqueeze(0)
     input_tensor = input_tensor.to(device)
+    
+    print(f"Input tensor shape: {input_tensor.shape}")
     
     # Perform inference
     with torch.no_grad():
         output = model(input_tensor)
     
     # Post-process the prediction
-    prediction = output.squeeze().cpu().numpy()
+    if isinstance(output, tuple):
+        prediction = output[0]  # Take the main output, not the deep supervision outputs
+    else:
+        prediction = output
+    
+    prediction = prediction.squeeze().cpu().numpy()
     postprocessed_prediction = postprocess_prediction(prediction)
     
     # Save the result
     if output_path:
         if input_type == 'nifti':
             # Resize the prediction back to the original image size
+            original_image = nib.load(image_path)
+            original_shape = original_image.shape
             resized_prediction = resize_to_original(postprocessed_prediction, original_shape)
             
             # Save as NIfTI with the original affine
-            nib.save(nib.Nifti1Image(resized_prediction, original_affine), output_path)
+            nib.save(nib.Nifti1Image(resized_prediction, affine), output_path)
         else:
             Image.fromarray(postprocessed_prediction.astype(np.uint8)).save(output_path)
     
     return postprocessed_prediction
 
 def resize_to_original(prediction, original_shape):
-    return np.array(Image.fromarray(prediction.astype(np.uint8)).resize(
-        (original_shape[1], original_shape[0]), Image.NEAREST))
+    # Ensure prediction is a numpy array
+    if not isinstance(prediction, np.ndarray):
+        prediction = np.array(prediction)
+    
+    # Calculate zoom factors
+    zoom_factors = np.array(original_shape) / np.array(prediction.shape)
+    
+    # Use scipy's zoom function for resizing
+    resized = zoom(prediction, zoom_factors, order=0)  # order=0 for nearest neighbor interpolation
+    
+    return resized
 
 def inference_on_dataset(model, input_dir, output_dir, input_type='nifti'):
     os.makedirs(output_dir, exist_ok=True)
