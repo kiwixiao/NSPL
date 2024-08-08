@@ -8,7 +8,7 @@ import os
 from tqdm import tqdm
 
 def train_model(train_dir, output_dir, in_channels, num_classes, dimensions, 
-                batch_size=1, num_epochs=1, learning_rate=0.001, val_split=0.2):
+                batch_size=4, num_epochs=300, learning_rate=0.001, val_split=0.2):
     os.makedirs(output_dir, exist_ok=True)
     # Create model
     model = create_nnunet(in_channels, num_classes, dimensions)
