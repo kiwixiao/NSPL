@@ -6,10 +6,10 @@ from nnunet_model import create_nnunet
 from nnunet_dataset import NNUnetDataset
 import os
 from tqdm import tqdm
-import time
 
 def train_model(train_dir, output_dir, in_channels, num_classes, dimensions, 
                 batch_size=1, num_epochs=1, learning_rate=0.001, val_split=0.2):
+    os.makedirs(output_dir, exist_ok=True)
     # Create model
     model = create_nnunet(in_channels, num_classes, dimensions)
     
@@ -18,7 +18,8 @@ def train_model(train_dir, output_dir, in_channels, num_classes, dimensions,
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     
     # Create dataset
-    full_dataset = NNUnetDataset(train_dir, target_size=(128, 128, 128))  # Adjust size as needed
+    target_size = (256, 256) if dimensions == 2 else (128, 128, 128)
+    full_dataset = NNUnetDataset(train_dir, target_size=target_size, dimensions=dimensions)
     
     # Split dataset into train and validation
     val_size = int(len(full_dataset) * val_split)
@@ -37,7 +38,6 @@ def train_model(train_dir, output_dir, in_channels, num_classes, dimensions,
         model.train()
         epoch_loss = 0.0
         
-        # Create a progress bar for each epoch
         with tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}/{num_epochs}", unit="batch") as pbar:
             for batch in train_loader:
                 inputs, targets = batch['image'].to(device), batch['mask'].to(device)
@@ -56,14 +56,12 @@ def train_model(train_dir, output_dir, in_channels, num_classes, dimensions,
                 
                 epoch_loss += loss.item()
                 
-                # Update the progress bar
                 pbar.update(1)
                 pbar.set_postfix({"Loss": f"{loss.item():.4f}"})
         
-        # Print epoch summary
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss/len(train_loader):.4f}")
         
-        # Validation loop (if you have one)
+        # Validation loop
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
@@ -80,10 +78,16 @@ def train_model(train_dir, output_dir, in_channels, num_classes, dimensions,
             checkpoint_path = os.path.join(output_dir, f"model_epoch_{epoch+1}.pth")
             torch.save(model.state_dict(), checkpoint_path)
             print(f"Checkpoint saved to {checkpoint_path}")
-        
-        # Optional: Early stopping check
-        
+    
     # Save final model
     final_model_path = os.path.join(output_dir, "final_model.pth")
     torch.save(model.state_dict(), final_model_path)
     print(f"Training completed. Final model saved to {final_model_path}")
+
+if __name__ == "__main__":
+    train_dir = "path/to/preprocessed/data"
+    output_dir = "path/to/output/directory"
+    in_channels = 1
+    num_classes = 1
+    dimensions = 3  # Change this to 2 for 2D inputs
+    train_model(train_dir, output_dir, in_channels, num_classes, dimensions)
