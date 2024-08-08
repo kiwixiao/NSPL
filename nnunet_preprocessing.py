@@ -1,113 +1,125 @@
 import nibabel as nib
 import numpy as np
-from scipy import ndimage
+from scipy.ndimage import zoom
 import os
 from PIL import Image
 
-def resample_image(image, target_spacing, is_mask=False):
-    if isinstance(image, nib.Nifti1Image):
-        original_spacing = image.header.get_zooms()[:3]
-        resize_factor = [o / t for o, t in zip(original_spacing, target_spacing)]
-        new_shape = [int(s * f) for s, f in zip(image.shape, resize_factor)]
-        
-        if is_mask:
-            return ndimage.zoom(image.get_fdata(), resize_factor, order=0)
-        else:
-            return ndimage.zoom(image.get_fdata(), resize_factor, order=3)
-    else:
-        # For PNG images, we don't have spacing information, so we just resize to target shape
-        target_shape = (int(target_spacing[0]), int(target_spacing[1]))
-        if is_mask:
-            return np.array(image.resize(target_shape, Image.NEAREST))
-        else:
-            return np.array(image.resize(target_shape, Image.BICUBIC))
+def resample_nifti(image, mask, target_spacing=(0.6, 0.6, 0.6)):
+    # Load image and mask data
+    image_data = image.get_fdata()
+    mask_data = mask.get_fdata()
+    original_affine = image.affine
+    original_header = image.header
 
-def normalize_intensity(image, mask=None):
-    if mask is not None:
-        mean = np.mean(image[mask > 0])
-        std = np.std(image[mask > 0])
-    else:
-        mean = np.mean(image)
-        std = np.std(image)
+    # Get current spacing
+    original_spacing = original_header.get_zooms()[:3]
+    print(f"Original spacing: {original_spacing}")
     
-    return (image - mean) / std
+    # Calculate the zoom factors
+    zoom_factors = np.array(original_spacing) / np.array(target_spacing)
+    print(f"Zoom factors: {zoom_factors}")
 
-def preprocess_case(image_path, mask_path, target_spacing=(128, 128, 128), input_type='nifti'):
+    # Resample the image and mask
+    resampled_image = zoom(image_data, zoom_factors, order=3)
+    resampled_mask = zoom(mask_data, zoom_factors, order=0)
+    resampled_mask = (resampled_mask > 0.5).astype(np.uint8)
+    
+    # Update the affine matrix
+    new_affine = original_affine.copy()
+    for i in range(3):
+        new_affine[i, i] = original_affine[i, i] * original_spacing[i] / target_spacing[i]
+    
+    return resampled_image, resampled_mask, new_affine, original_header
+
+def pad_image(image, target_size=(256, 256)):
+    width, height = image.size
+    aspect_ratio = width / height
+    target_aspect = target_size[0] / target_size[1]
+
+    if aspect_ratio > target_aspect:
+        new_width = target_size[0]
+        new_height = int(new_width / aspect_ratio)
+    else:
+        new_height = target_size[1]
+        new_width = int(new_height * aspect_ratio)
+
+    resized_image = image.resize((new_width, new_height), Image.BICUBIC if image.mode != 'L' else Image.NEAREST)
+
+    padded_image = Image.new(image.mode, target_size, (0, 0, 0))
+    paste_x = (target_size[0] - new_width) // 2
+    paste_y = (target_size[1] - new_height) // 2
+    padded_image.paste(resized_image, (paste_x, paste_y))
+
+    return padded_image
+
+def preprocess_case(image_path, mask_path, target_spacing=(0.6, 0.6, 0.6), target_size=(128, 128), input_type='nifti'):
     if input_type == 'nifti':
         image_nii = nib.load(image_path)
         mask_nii = nib.load(mask_path)
         
         original_shape = image_nii.shape
-        original_mask = mask_nii.get_fdata()
-        original_positive_pixels = np.sum(original_mask > 0)
+        original_spacing = image_nii.header.get_zooms()[:3]
         
-        resampled_image = resample_image(image_nii, target_spacing)
-        resampled_mask = resample_image(mask_nii, target_spacing, is_mask=True)
+        resampled_image, resampled_mask, new_affine, original_header = resample_nifti(image_nii, mask_nii, target_spacing)
         
-        affine = image_nii.affine
+        print(f"Original image shape: {original_shape}, spacing: {original_spacing}")
+        print(f"Resampled image shape: {resampled_image.shape}, new spacing: {target_spacing}")
+        
+        return resampled_image, resampled_mask, new_affine, original_header
     else:
-        image = Image.open(image_path).convert('L')
-        mask = Image.open(mask_path).convert('L')
+        image = Image.open(image_path)
+        mask = Image.open(mask_path)
         
-        original_shape = np.array(image).shape
-        original_mask = np.array(mask)
-        original_positive_pixels = np.sum(original_mask > 0)
+        original_shape = image.size
         
-        resampled_image = resample_image(image, target_spacing[:2])
-        resampled_mask = resample_image(mask, target_spacing[:2], is_mask=True)
+        padded_image = pad_image(image, target_size)
+        padded_mask = pad_image(mask, target_size)
         
-        affine = None
-    
-    # Ensure both resampled image and mask have the same shape
-    target_shape = resampled_image.shape
-    if resampled_mask.shape != target_shape:
-        resampled_mask = resize_to_match(resampled_mask, target_shape)
-    
-    resampled_positive_pixels = np.sum(resampled_mask > 0)
-    pixel_ratio = resampled_positive_pixels / original_positive_pixels
-    print(f"Original positive pixels: {original_positive_pixels}")
-    print(f"Resampled positive pixels: {resampled_positive_pixels}")
-    print(f"Ratio of positive pixels (resampled / original): {pixel_ratio:.4f}")
+        print(f"Original image shape: {original_shape}")
+        print(f"Padded image shape: {padded_image.size}")
+        
+        return padded_image, padded_mask, None, None
 
-    if abs(pixel_ratio - 1) > 0.1:
-        print("WARNING: Significant change in the number of positive pixels after resampling.")
-        print("Consider adjusting the target spacing or checking the preprocessing steps.")
+def save_nifti(data, affine, header, output_path):
+    new_img = nib.Nifti1Image(data, affine)
     
-    normalized_image = normalize_intensity(resampled_image, resampled_mask)
+    # Update header information
+    new_img.header.set_data_shape(data.shape)
+    new_img.header.set_zooms(np.sqrt(np.sum(affine[:3, :3]**2, axis=0)))
     
-    print(f"Original image shape: {original_shape}")
-    print(f"Resampled image shape: {resampled_image.shape}")
-    print(f"Resampled mask shape: {resampled_mask.shape}")
+    # Copy over additional header information from the original header
+    for key in header.keys():
+        if key not in ['dim', 'pixdim']:
+            new_img.header[key] = header[key]
     
-    return normalized_image, resampled_mask, affine
+    nib.save(new_img, output_path)
+    print(f"Saved NIfTI file: {output_path}")
+    print(f"Shape: {new_img.shape}, Spacing: {new_img.header.get_zooms()[:3]}")
 
-def resize_to_match(array, target_shape):
-    return ndimage.zoom(array, np.array(target_shape) / np.array(array.shape), order=0)
-
-def preprocess_dataset(input_dir, output_dir, input_type='nifti'):
+def preprocess_dataset(input_dir, output_dir, target_spacing=(0.6, 0.6, 0.6), target_size=(128, 128), input_type='nifti'):
     os.makedirs(output_dir, exist_ok=True)
     
     if input_type == 'nifti':
         for file in os.listdir(input_dir):
-            if file.startswith('OSAMRI') and 'mri' in file and file.endswith(('.nii', '.nii.gz')):
+            if file.startswith('OSAMRI') and file.endswith(('.nii', '.nii.gz')) and 'mask' not in file:
                 image_path = os.path.join(input_dir, file)
+                
                 subject_id = file.split('_')[0]
+                mask_files = [f for f in os.listdir(input_dir) if f.startswith(subject_id) and 'mask' in f]
                 
-                mask_file = next((f for f in os.listdir(input_dir) if f.startswith(subject_id) and 'mask' in f), None)
-                
-                if mask_file is None:
+                if not mask_files:
                     print(f"Mask not found for {file}")
                     continue
                 
-                mask_path = os.path.join(input_dir, mask_file)
+                mask_path = os.path.join(input_dir, mask_files[0])
                 
-                preprocessed_image, preprocessed_mask, affine = preprocess_case(image_path, mask_path, input_type=input_type)
+                preprocessed_image, preprocessed_mask, new_affine, original_header = preprocess_case(image_path, mask_path, target_spacing=target_spacing, input_type=input_type)
                 
                 output_image_path = os.path.join(output_dir, f"preprocessed_{file}")
-                output_mask_path = os.path.join(output_dir, f"preprocessed_{mask_file}")
+                output_mask_path = os.path.join(output_dir, f"preprocessed_{mask_files[0]}")
                 
-                nib.save(nib.Nifti1Image(preprocessed_image, affine), output_image_path)
-                nib.save(nib.Nifti1Image(preprocessed_mask, affine), output_mask_path)
+                save_nifti(preprocessed_image, new_affine, original_header, output_image_path)
+                save_nifti(preprocessed_mask, new_affine, original_header, output_mask_path)
     else:
         image_dir = os.path.join(input_dir, 'images')
         mask_dir = os.path.join(input_dir, 'masks')
@@ -121,18 +133,20 @@ def preprocess_dataset(input_dir, output_dir, input_type='nifti'):
                     print(f"Mask not found for {file}")
                     continue
                 
-                preprocessed_image, preprocessed_mask, _ = preprocess_case(image_path, mask_path, input_type=input_type)
+                padded_image, padded_mask, _, _ = preprocess_case(image_path, mask_path, target_size=target_size, input_type=input_type)
                 
                 output_image_path = os.path.join(output_dir, f"preprocessed_image_{file}")
                 output_mask_path = os.path.join(output_dir, f"preprocessed_mask_{file}")
                 
-                Image.fromarray((preprocessed_image * 255).astype(np.uint8)).save(output_image_path)
-                Image.fromarray(preprocessed_mask.astype(np.uint8)).save(output_mask_path)
+                padded_image.save(output_image_path)
+                padded_mask.save(output_mask_path)
     
     print("Preprocessing completed.")
 
 if __name__ == "__main__":
     input_dir = "path/to/input/directory"
     output_dir = "path/to/output/directory"
+    target_spacing = (0.6, 0.6, 0.6)
+    target_size = (128, 128)
     input_type = "nifti"  # or "png"
-    preprocess_dataset(input_dir, output_dir, input_type)
+    preprocess_dataset(input_dir, output_dir, target_spacing=target_spacing, target_size=target_size, input_type=input_type)

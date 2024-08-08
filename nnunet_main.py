@@ -1,5 +1,3 @@
-# In nnunet_main.py
-
 import argparse
 from nnunet_preprocessing import preprocess_dataset
 from nnunet_inference import inference_on_dataset
@@ -15,10 +13,12 @@ def main():
     parser.add_argument("--num_classes", type=int, default=1, help="Number of output classes")
     parser.add_argument("--dimensions", type=int, default=3, choices=[2, 3], help="Dimensions of the input data (2D or 3D)")
     parser.add_argument("--input_type", type=str, choices=['nifti', 'png'], required=True, help="Input file type (nifti or png)")
+    parser.add_argument("--target_spacing", type=float, nargs=3, default=(0.6, 0.6, 0.6), help="Target spacing for resampling NIfTI images")
+    parser.add_argument("--target_size", type=int, nargs=2, default=(128, 128), help="Target size for padding PNG images")
     args = parser.parse_args()
 
     if args.mode == 'preprocess':
-        preprocess_dataset(args.input_dir, args.output_dir, args.input_type)
+        preprocess_dataset(args.input_dir, args.output_dir, target_spacing=tuple(args.target_spacing), target_size=tuple(args.target_size), input_type=args.input_type)
     elif args.mode == 'train':
         train_model(args.input_dir, args.output_dir, args.in_channels, args.num_classes, args.dimensions)
     elif args.mode == 'inference':
