@@ -69,7 +69,7 @@ def inference_on_case(model, image_path, output_path, dimensions, target_size):
     return prediction
 
 def inference_on_dataset(model_path, input_dir, output_dir, in_channels=1, num_classes=1, dimensions=3):
-    target_size = (256, 256) if dimensions == 2 else (128, 128, 128)
+    target_size = (64, 64) if dimensions == 2 else (128, 128, 128)
     model = load_model(model_path, in_channels, num_classes, dimensions)
     os.makedirs(output_dir, exist_ok=True)
     
